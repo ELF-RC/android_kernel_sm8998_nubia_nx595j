@@ -1,0 +1,3 @@
+[submodule "MKBOOTIMG/signer"]
+	path = MKBOOTIMG/signer
+	url = https://github.com/kindle4jerry/boot_signer_for_nubia_nx563j.git
