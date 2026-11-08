@@ -592,7 +592,7 @@
 				linux,default-trigger = "none";
 			};
 
-			/*blue_led: qcom,rgb_2 {
+			blue_led: qcom,rgb_2 {
 				label = "rgb";
 				qcom,id = <5>;
 				qcom,mode = "lpg";
@@ -614,7 +614,7 @@
 				linux,default-trigger = "none";
 				nubia,grade_percentage = <30>;
 				nubia,grade_scale_offset = <0> ;
-			};*/
+			};
 		};
 /* Nubia end  2017.9.21*/
 
