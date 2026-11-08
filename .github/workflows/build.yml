@@ -1,0 +1,163 @@
+name: Build kernel + boot.img
+
+on:
+  workflow_dispatch:
+    inputs:
+      defconfig:
+        description: 'defconfig name (arch/arm64/configs/<name>)'
+        required: false
+        default: 'lineageos_nx595j_defconfig'
+      jobs:
+        description: 'Parallel make jobs'
+        required: false
+        default: '4'
+
+concurrency:
+  group: build-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  build:
+    runs-on: ubuntu-latest
+    timeout-minutes: 240
+
+    env:
+      ARCH: arm64
+      DEFCONFIG: ${{ inputs.defconfig }}
+      JOBS: ${{ inputs.jobs }}
+      # Sibling of the checkout dir, so it never ends up in the repo tree.
+      TOOLS: ${{ github.workspace }}/../tools
+      OUT: ${{ github.workspace }}/out
+      CLANG_DIR: ${{ github.workspace }}/../tools/clang/host/linux-x86/clang-r428724/bin
+      GCC64: ${{ github.workspace }}/../tools/gcc-linaro-4.9.4-2017.01-x86_64_aarch64-linux-gnu/bin/aarch64-linux-gnu-
+      GCC32: ${{ github.workspace }}/../tools/gcc-linaro-4.9.4-2017.01-x86_64_arm-linux-gnueabi/bin/arm-linux-gnueabi-
+
+    steps:
+      - name: Checkout (with MKBOOTIMG/signer submodule)
+        uses: actions/checkout@v4
+        with:
+          submodules: recursive
+          fetch-depth: 1
+
+      - name: Install build dependencies
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y --no-install-recommends \
+            build-essential bc bison flex libssl-dev libelf-dev \
+            python3 zip unzip curl ca-certificates default-jre-headless
+
+      # ~2.7G of toolchain; re-downloading it on every run dominates wall time.
+      - name: Restore prebuilt toolchain
+        id: tools-cache
+        uses: actions/cache@v4
+        with:
+          path: ${{ env.TOOLS }}
+          key: tools-clang-r428724-linaro-gcc494
+
+      - name: Fetch prebuilt toolchain
+        if: steps.tools-cache.outputs.cache-hit != 'true'
+        run: |
+          git clone --depth=1 https://github.com/ELF-RC/android_kernel4x_tools.git "$TOOLS"
+
+      - name: Verify toolchain
+        run: |
+          test -x "$CLANG_DIR/clang"
+          test -x "${GCC64}gcc"
+          test -x "${GCC32}gcc"
+          "$CLANG_DIR/clang" --version | head -1
+
+      - name: Configure
+        run: |
+          make -C "$GITHUB_WORKSPACE" O="$OUT" ARCH=arm64 "$DEFCONFIG"
+
+      - name: Build kernel
+        run: |
+          export PATH="$CLANG_DIR:$PATH"
+          # CONFIG_BUILD_ARM64_APPENDED_DTB_IMAGE=y, so the real target is
+          # Image.gz-dtb. Building it explicitly also avoids relying on `all`.
+          make -j"$JOBS" O="$OUT" -C "$GITHUB_WORKSPACE" ARCH=arm64 CC=clang \
+            CROSS_COMPILE="$GCC64" \
+            CROSS_COMPILE_ARM32="$GCC32" \
+            AR=llvm-ar NM=llvm-nm OBJCOPY=llvm-objcopy OBJDUMP=llvm-objdump \
+            READELF=llvm-readelf OBJSIZE=llvm-size STRIP=llvm-strip \
+            HOSTCC=clang HOSTCXX=clang++ LLVM_IAS=1 \
+            Image.gz-dtb
+
+      - name: Split Image.gz-dtb into kernel + DTB
+        run: |
+          GZDTB="$OUT/arch/arm64/boot/Image.gz-dtb"
+          test -s "$GZDTB" || { echo "::error::$GZDTB missing - build did not produce it"; exit 1; }
+          # Built payloads live in their own dir: magiskboot unpacks a slot also
+          # named "kernel_dtb" into the boot dir, which would clobber the built one.
+          mkdir -p "$RUNNER_TEMP/build"
+          # Image.gz-dtb = gzip(Image) || raw DTB. magiskboot wants them apart,
+          # and the tree has no standalone Image, so both come out of this step.
+          python3 - "$GZDTB" "$RUNNER_TEMP/build" <<'PY'
+          import sys, zlib, os
+          src, outdir = sys.argv[1], sys.argv[2]
+          d = zlib.decompressobj(16 + zlib.MAX_WBITS)
+          blob = open(src, 'rb').read()
+          image = d.decompress(blob)
+          dtb = d.unused_data
+          assert not d.unconsumed_tail, 'truncated gzip stream'
+          assert len(image) > 1_000_000, 'gzip payload too small'
+          assert image[0x38:0x3c] == b'ARM\x64', 'payload is not an arm64 Image'
+          assert len(dtb) > 8 and dtb[:4] == b'\xd0\x0d\xfe\xed', 'appended DTB magic missing'
+          # The appended blob carries more than the first FDT's header total.
+          assert len(dtb) >= int.from_bytes(dtb[4:8], 'big'), 'DTB shorter than its header claims'
+          open(os.path.join(outdir, 'Image'), 'wb').write(image)
+          open(os.path.join(outdir, 'kernel_dtb'), 'wb').write(dtb)
+          print('Image:', len(image), 'bytes / DTB:', len(dtb), 'bytes')
+          PY
+
+      - name: Repack boot.img with stock ramdisk
+        run: |
+          MB="$GITHUB_WORKSPACE/MKBOOTIMG/magiskboot"
+          chmod +x "$MB"
+          cd "$RUNNER_TEMP/boot"
+          cp "$GITHUB_WORKSPACE/MKBOOTIMG/boot.img" stock.img
+          "$MB" unpack stock.img > unpack.log 2>&1 || { cat unpack.log; exit 1; }
+          cat unpack.log
+          # This magiskboot build emits "kernel" + "kernel_dtb" + "ramdisk.cpio".
+          # Fail loudly rather than silently signing the stock payload.
+          test -f kernel || { echo "::error::kernel slot not found after unpack"; exit 1; }
+          test -f kernel_dtb || { echo "::error::kernel_dtb slot not found after unpack"; exit 1; }
+          # magiskboot recompresses the kernel slot back to its original format.
+          cp "$RUNNER_TEMP/build/Image" kernel
+          cp "$RUNNER_TEMP/build/kernel_dtb" kernel_dtb
+          ls -l kernel kernel_dtb
+          "$MB" repack stock.img boot-unsigned.img > repack.log 2>&1 || { cat repack.log; exit 1; }
+          cat repack.log
+          test -s boot-unsigned.img
+
+      - name: Sign boot.img and verify
+        run: |
+          SIG="$GITHUB_WORKSPACE/MKBOOTIMG/signer"
+          MB="$GITHUB_WORKSPACE/MKBOOTIMG/magiskboot"
+          cd "$RUNNER_TEMP/boot"
+          java -jar "$SIG/boot_signer.jar" /boot boot-unsigned.img \
+            "$SIG/verity.pk8" "$SIG/verity.x509.pem" boot.img
+          java -jar "$SIG/boot_signer.jar" -verify boot.img
+
+          # boot_signer truncates to the size recorded in the AVB footer, so a
+          # round-trip unpack is the only way to prove the payload survived.
+          mkdir -p verify && cp boot.img verify/ && cd verify
+          "$MB" unpack boot.img > unpack.log 2>&1 || { cat unpack.log; exit 1; }
+          grep -E 'KERNEL_SZ|KERNEL_DTB_SZ|SIGNED' unpack.log || true
+          cmp kernel "$RUNNER_TEMP/build/Image"
+          cmp kernel_dtb "$RUNNER_TEMP/build/kernel_dtb"
+          echo 'payloads match build output'
+
+          cp ../boot.img "$GITHUB_WORKSPACE/boot-${{ github.sha }}.img"
+          cp "$RUNNER_TEMP/build/kernel_dtb" "$GITHUB_WORKSPACE/kernel-${{ github.sha }}.dtb"
+          sha1sum "$GITHUB_WORKSPACE/boot-${{ github.sha }}.img"
+
+      - name: Upload boot.img
+        uses: actions/upload-artifact@v4
+        with:
+          name: boot-${{ github.sha }}
+          path: |
+            boot-${{ github.sha }}.img
+            kernel-${{ github.sha }}.dtb
+          if-no-files-found: error
+          retention-days: 30
