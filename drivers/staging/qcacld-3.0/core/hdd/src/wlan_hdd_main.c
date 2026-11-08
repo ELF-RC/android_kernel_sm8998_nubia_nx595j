@@ -12960,9 +12960,10 @@ static void __hdd_module_exit(void)
 }
 
 /**
- * __hdd_module_init - Module init helper
+ * hdd_module_init - Module init entry
  *
- * Module init helper function used by both module and static driver.
+ * Create the wlan state control device, then load the driver during
+ * module init instead of waiting for a userspace write to /dev/wlan.
  *
  * Return: 0 for success, errno on failure
  */
@@ -12971,10 +12972,12 @@ static int hdd_module_init(void)
 	int ret;
 
 	ret = wlan_hdd_state_ctrl_param_create();
-	if (ret)
+	if (ret) {
 		pr_err("wlan_hdd_state_create:%x\n", ret);
+		return ret;
+	}
 
-	return ret;
+	return __hdd_module_init();
 }
 
 /**
