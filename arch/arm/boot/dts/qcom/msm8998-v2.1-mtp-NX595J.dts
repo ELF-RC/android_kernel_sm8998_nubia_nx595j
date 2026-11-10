@@ -22,4 +22,37 @@
 	qcom,board-id = <8 0>;
 };
 
+/*
+ * ramoops: Persistent store for kernel panic/oops/console logs.
+ * Located at 0x9fa00000 (1MB), immediately after the splash_region
+ * defined in msm8998-v2.1.dtsi. This region is chosen because:
+ * 1. It's after all SoC-reserved areas in msm8998-v2.1.dtsi
+ * 2. It's within the RAM range for both 6GB and 8GB configurations
+ * 3. It's 1MB-aligned and unlikely to conflict with vendor-specific allocations
+ *
+ * Memory layout:
+ * - console-size: 256KB (console log buffer)
+ * - pmsg-size: 16KB (user-space messages via /dev/pmsg0)
+ * - record-size: 16KB (per panic/oops dump)
+ * - ftrace-size: 0 (disabled)
+ * Total: 1MB
+ */
+&reserved_memory {
+	ramoops_reserved: ramoops@9fa00000 {
+		compatible = "ramoops";
+		reg = <0 0x9fa00000 0 0x100000>;
+		no-map;
+	};
+};
+
+ramoops {
+	compatible = "ramoops";
+	memory-region = <&ramoops_reserved>;
+	record-size = <0x4000>;
+	console-size = <0x40000>;
+	pmsg-size = <0x4000>;
+	ftrace-size = <0x0>;
+	dump-oops = <1>;
+};
+
 #include "nubia/NX595J/head.dtsi"
