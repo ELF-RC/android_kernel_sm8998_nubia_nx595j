@@ -24,11 +24,12 @@
 
 /*
  * ramoops: Persistent store for kernel panic/oops/console logs.
- * Located at 0x9fa00000 (1MB), immediately after the splash_region
- * defined in msm8998-v2.1.dtsi. This region is chosen because:
+ * Located at 0x9fb00000 (1MB), with a 1MB guard band after splash_region.
+ * This region is chosen because:
  * 1. It's after all SoC-reserved areas in msm8998-v2.1.dtsi
- * 2. It's within the RAM range for both 6GB and 8GB configurations
- * 3. It's 1MB-aligned and unlikely to conflict with vendor-specific allocations
+ * 2. 1MB guard band (0x9fa00000-0x9fb00000) protects against display DMA prefetch
+ * 3. Within RAM range for both 6GB and 8GB configurations
+ * 4. 1MB-aligned and unlikely to conflict with vendor-specific allocations
  *
  * Memory layout:
  * - console-size: 256KB (console log buffer)
@@ -36,11 +37,16 @@
  * - record-size: 16KB (per panic/oops dump)
  * - ftrace-size: 0 (disabled)
  * Total: 1MB
+ *
+ * Note: Data persistence across reboot depends on:
+ * - Bootloader not clearing this region
+ * - No DMA/hardware access during normal operation
+ * - Proper no-map attribute preventing kernel mapping
  */
 &reserved_memory {
-	ramoops_reserved: ramoops@9fa00000 {
+	ramoops_reserved: ramoops@9fb00000 {
 		compatible = "ramoops";
-		reg = <0 0x9fa00000 0 0x100000>;
+		reg = <0 0x9fb00000 0 0x100000>;
 		no-map;
 	};
 };
