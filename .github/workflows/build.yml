@@ -4,7 +4,6 @@ on:
   push:
     branches:
       - main
-      - KernelSU
   workflow_dispatch:
     inputs:
       localversion_name:
@@ -21,32 +20,33 @@ concurrency:
 
 jobs:
   build:
-    name: Build (${{ matrix.branch }})
+    name: Build (${{ matrix.tag }})
     runs-on: ubuntu-24.04
     timeout-minutes: 300
     strategy:
-      # One runner per branch; a failure on one must not cancel the other.
+      # One runner per tag; a failure on one must not cancel the other.
       fail-fast: false
       matrix:
         include:
-          - branch: main
-            defconfig: lineageos_nx595j_defconfig
-          - branch: KernelSU
-            defconfig: lineageos_nx595j_ksu_defconfig
+          - tag: main
+            kernelsu: false
+          - tag: KernelSU
+            kernelsu: true
 
     env:
       ARCH: arm64
       # Empty on push, so the fallback keeps automated builds versioned 'ci'.
       LOCALVERSION_NAME: ${{ inputs.localversion_name || 'ci' }}
-      BRANCH: ${{ matrix.branch }}
-      DEFCONFIG: ${{ matrix.defconfig }}
+      TAG: ${{ matrix.tag }}
+      # Both runners build the same defconfig; KernelSU is layered on top.
+      DEFCONFIG: lineageos_nx595j_defconfig
       TOOLS: ${{ github.workspace }}/tooltmp
 
     steps:
-      - name: Checkout ${{ matrix.branch }}
+      - name: Checkout main
         uses: actions/checkout@v4
         with:
-          ref: ${{ matrix.branch }}
+          ref: main
           fetch-depth: 1
 
       - name: Create and enable 10G swap
@@ -96,6 +96,44 @@ jobs:
           jobs="$(nproc)"
           echo "BUILD_JOBS=$jobs" >> "$GITHUB_ENV"
           echo "::notice::Using $jobs CPUs for the kernel build"
+
+      - name: Add KernelSU support
+        if: matrix.kernelsu
+        run: |
+          set -euo pipefail
+          # 1. Enable the driver in the defconfig. The trailing blank line keeps
+          #    later appends from landing in the middle of this block.
+          CONF="arch/arm64/configs/${DEFCONFIG}"
+          test -f "$CONF" || { echo "::error::$CONF not found"; exit 1; }
+          printf '\n# KernelSU\n' >> "$CONF"
+          for opt in \
+            CONFIG_KSU=y \
+            CONFIG_KSU_TAMPER_SYSCALL_TABLE=y \
+            CONFIG_KSU_THRONE_TRACKER_ALWAYS_THREADED=y \
+            CONFIG_KSU_ENABLE_FULL_UID_CHECKS=y \
+            CONFIG_KSU_FEATURE_SULOG=y
+          do
+            echo "$opt" >> "$CONF"
+          done
+          tail -n 8 "$CONF"
+
+          # 2. Vendor the driver next to the kernel tree.
+          git clone --depth=1 https://github.com/backslashxx/KernelSU.git KernelSU
+
+          # 3. Link drivers/kernelsu -> KernelSU/Kernel (older layouts: the repo root).
+          DRV=$(test -d "$PWD/common/drivers" && echo common/drivers || echo drivers)
+          test -d "$PWD/$DRV" || { echo "drivers/ not found"; exit 127; }
+          echo "DRIVER_DIR=$PWD/$DRV"
+          ln -sf "$(realpath --relative-to="$PWD/$DRV" "$PWD/KernelSU/kernel")" "$PWD/$DRV/kernelsu"
+          ls -l "$PWD/$DRV/kernelsu"
+
+          # 4. Wire it into kbuild.
+          grep -q kernelsu "$PWD/$DRV/Makefile" || printf "\nobj-$(CONFIG_KSU) += kernelsu/\n" >> "$PWD/$DRV/Makefile"
+          tail -n 5 "$PWD/$DRV/Makefile"
+
+          # 5. And into Kconfig.
+          grep -q 'source "drivers/kernelsu/Kconfig"' "$PWD/$DRV/Kconfig" || sed -i '/endmenu/i\source "drivers/kernelsu/Kconfig"' "$PWD/$DRV/Kconfig"
+          grep -n 'kernelsu/Kconfig' "$PWD/$DRV/Kconfig"
 
       - name: Configure
         run: |
@@ -181,7 +219,7 @@ jobs:
             "$SIG/verity.pk8" "$SIG/verity.x509.pem" boot.img
           java -jar "$SIG/boot_signer.jar" -verify boot.img
           DATE="$(date -u +%Y%m%d)"
-          IMAGE_NAME="bootimg-${LOCALVERSION_NAME}-${BRANCH}-${DATE}.img"
+          IMAGE_NAME="bootimg-${LOCALVERSION_NAME}-${TAG}-${DATE}.img"
           echo "IMAGE_NAME=$IMAGE_NAME" >> "$GITHUB_ENV"
           cp boot.img "$GITHUB_WORKSPACE/$IMAGE_NAME"
           sha1sum "$GITHUB_WORKSPACE/$IMAGE_NAME"
