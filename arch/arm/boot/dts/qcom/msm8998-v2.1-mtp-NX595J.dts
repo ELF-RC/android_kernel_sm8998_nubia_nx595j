@@ -43,22 +43,23 @@
  * - No DMA/hardware access during normal operation
  * - Proper no-map attribute preventing kernel mapping
  */
-&reserved_memory {
-	ramoops_reserved: ramoops@9fb00000 {
-		compatible = "ramoops";
-		reg = <0 0x9fb00000 0 0x100000>;
-		no-map;
+/ {
+	reserved-memory {
+		ramoops_reserved: ramoops_region@9fb00000 {
+			compatible = "removed-dma-pool";
+			no-map;
+			reg = <0 0x9fb00000 0 0x100000>;
+		};
 	};
-};
 
-ramoops {
-	compatible = "ramoops";
-	memory-region = <&ramoops_reserved>;
-	record-size = <0x4000>;
-	console-size = <0x40000>;
-	pmsg-size = <0x4000>;
-	ftrace-size = <0x0>;
-	dump-oops = <1>;
+	ramoops {
+		compatible = "ramoops";
+		memory-region = <&ramoops_reserved>;
+		record-size = <0x4000>;
+		console-size = <0x40000>;
+		pmsg-size = <0x4000>;
+		ftrace-size = <0x0>;
+	};
 };
 
 #include "nubia/NX595J/head.dtsi"
