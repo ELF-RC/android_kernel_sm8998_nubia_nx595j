@@ -84,4 +84,10 @@ int lz4_decompress(const unsigned char *src, size_t *src_len,
  */
 int lz4_decompress_unknownoutputsize(const unsigned char *src, size_t src_len,
 		unsigned char *dest, size_t *dest_len);
+
+/* Bounded block decoders return bytes written or a negative error. */
+int LZ4_decompress_safe(const char *src, char *dst, int src_size,
+			int dst_capacity);
+int LZ4_decompress_safe_partial(const char *src, char *dst, int src_size,
+				int target_size, int dst_capacity);
 #endif
