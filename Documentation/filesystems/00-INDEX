@@ -53,6 +53,8 @@ ecryptfs.txt
 	- docs on eCryptfs: stacked cryptographic filesystem for Linux.
 efivarfs.txt
 	- info for the efivarfs filesystem.
+erofs.txt
+	- format, supported features and mount options for EROFS.
 exofs.txt
 	- info, usage, mount options, design about EXOFS.
 ext2.txt
