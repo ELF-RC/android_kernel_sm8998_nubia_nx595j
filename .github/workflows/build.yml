@@ -128,7 +128,7 @@ jobs:
           ls -l "$PWD/$DRV/kernelsu"
 
           # 4. Wire it into kbuild.
-          grep -q kernelsu "$PWD/$DRV/Makefile" || printf "\nobj-$(CONFIG_KSU) += kernelsu/\n" >> "$PWD/$DRV/Makefile"
+          grep -q kernelsu "$PWD/$DRV/Makefile" || printf '\nobj-$(CONFIG_KSU) += kernelsu/\n' >> "$PWD/$DRV/Makefile"
           tail -n 5 "$PWD/$DRV/Makefile"
 
           # 5. And into Kconfig.
