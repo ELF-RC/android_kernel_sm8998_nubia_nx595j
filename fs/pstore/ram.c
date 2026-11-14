@@ -520,14 +520,25 @@ void notrace ramoops_console_write_buf(const char *buf, size_t size)
 static int ramoops_parse_dt_size(struct platform_device *pdev,
 		const char *propname, unsigned long *val)
 {
+	struct device_node *np = pdev->dev.of_node;
+	u32 val32 = 0;
 	u64 val64;
-	int ret;
+	int len, ret;
 
-	ret = of_property_read_u64(pdev->dev.of_node, propname, &val64);
-	if (ret == -EINVAL) {
+	if (!of_find_property(np, propname, &len)) {
 		*val = 0;
 		return 0;
-	} else if (ret != 0) {
+	}
+
+	if (len == sizeof(val32)) {
+		ret = of_property_read_u32(np, propname, &val32);
+		val64 = val32;
+	} else if (len == sizeof(val64)) {
+		ret = of_property_read_u64(np, propname, &val64);
+	} else {
+		ret = -EINVAL;
+	}
+	if (ret) {
 		dev_err(&pdev->dev, "failed to parse property %s: %d\n",
 				propname, ret);
 		return ret;
@@ -767,8 +778,18 @@ static struct platform_driver ramoops_driver = {
 
 static void ramoops_register_dummy(void)
 {
+	struct device_node *np;
+
 	if (!mem_size)
 		return;
+
+	/* DT devices may be populated after this initcall. */
+	for_each_matching_node(np, dt_match) {
+		if (of_device_is_available(np)) {
+			of_node_put(np);
+			return;
+		}
+	}
 
 	pr_info("using module parameters\n");
 
