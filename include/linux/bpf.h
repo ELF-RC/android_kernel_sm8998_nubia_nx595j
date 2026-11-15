@@ -409,6 +409,7 @@ static inline struct bpf_prog *bpf_prog_get_type_path(const char *name,
 				enum bpf_prog_type type)
 {
 	return ERR_PTR(-EOPNOTSUPP);
+}
 
 static inline bool unprivileged_ebpf_enabled(void)
 {
