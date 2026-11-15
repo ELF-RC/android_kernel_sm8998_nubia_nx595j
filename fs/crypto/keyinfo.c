@@ -14,6 +14,7 @@
 #include <crypto/aes.h>
 #include <crypto/sha.h>
 #include <crypto/skcipher.h>
+#include <linux/fscrypt_legacy_keyring.h>
 #include "fscrypt_private.h"
 
 static struct crypto_shash *essiv_hash_tfm;
@@ -85,7 +86,7 @@ find_and_lock_process_key(const char *prefix,
 	if (!description)
 		return ERR_PTR(-ENOMEM);
 
-	key = request_key(&key_type_logon, description, NULL);
+	key = fscrypt_legacy_request_key(description);
 	kfree(description);
 	if (IS_ERR(key))
 		return key;
