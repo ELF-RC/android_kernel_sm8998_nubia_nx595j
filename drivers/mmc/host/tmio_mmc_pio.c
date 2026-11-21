@@ -1,6 +1,8 @@
 /*
  * linux/drivers/mmc/host/tmio_mmc_pio.c
  *
+ * Copyright (C) 2016 Sang Engineering, Wolfram Sang
+ * Copyright (C) 2015-16 Renesas Electronics Corporation
  * Copyright (C) 2011 Guennadi Liakhovetski
  * Copyright (C) 2007 Ian Molton
  * Copyright (C) 2004 Ian Molton
@@ -37,7 +39,6 @@
 #include <linux/mmc/host.h>
 #include <linux/mmc/mmc.h>
 #include <linux/mmc/slot-gpio.h>
-#include <linux/mmc/tmio.h>
 #include <linux/module.h>
 #include <linux/pagemap.h>
 #include <linux/platform_device.h>
@@ -159,20 +160,22 @@ static void tmio_mmc_set_clock(struct tmio_mmc_host *host,
 
 	if (new_clock) {
 		for (clock = host->mmc->f_min, clk = 0x80000080;
-			new_clock >= (clock<<1); clk >>= 1)
+		     new_clock >= (clock << 1);
+		     clk >>= 1)
 			clock <<= 1;
 
 		/* 1/1 clock is option */
 		if ((host->pdata->flags & TMIO_MMC_CLK_ACTUAL) &&
-		    ((clk >> 22) & 0x1))
+		   ((clk >> 22) & 0x1))
 			clk |= 0xff;
 	}
 
 	if (host->set_clk_div)
-		host->set_clk_div(host->pdev, (clk>>22) & 1);
+		host->set_clk_div(host->pdev, (clk >> 22) & 1);
 
-	sd_ctrl_write16(host, CTL_SD_CARD_CLK_CTL, clk & 0x1ff);
-	msleep(10);
+	sd_ctrl_write16(host, CTL_SD_CARD_CLK_CTL, clk & CLK_CTL_DIV_MASK);
+	if (!(host->pdata->flags & TMIO_MMC_FAST_CLK_CHG))
+		msleep(10);
 }
 
 static void tmio_mmc_clk_stop(struct tmio_mmc_host *host)
@@ -183,16 +186,16 @@ static void tmio_mmc_clk_stop(struct tmio_mmc_host *host)
 		msleep(10);
 	}
 
-	sd_ctrl_write16(host, CTL_SD_CARD_CLK_CTL, ~0x0100 &
+	sd_ctrl_write16(host, CTL_SD_CARD_CLK_CTL, ~CLK_CTL_SCLKEN &
 		sd_ctrl_read16(host, CTL_SD_CARD_CLK_CTL));
-	msleep(10);
+	msleep(host->pdata->flags & TMIO_MMC_FAST_CLK_CHG ? 5 : 10);
 }
 
 static void tmio_mmc_clk_start(struct tmio_mmc_host *host)
 {
-	sd_ctrl_write16(host, CTL_SD_CARD_CLK_CTL, 0x0100 |
+	sd_ctrl_write16(host, CTL_SD_CARD_CLK_CTL, CLK_CTL_SCLKEN |
 		sd_ctrl_read16(host, CTL_SD_CARD_CLK_CTL));
-	msleep(10);
+	msleep(host->pdata->flags & TMIO_MMC_FAST_CLK_CHG ? 1 : 10);
 
 	/* implicit BUG_ON(!res) */
 	if (host->pdata->flags & TMIO_MMC_HAVE_HIGH_REG) {
@@ -1011,12 +1014,20 @@ static int tmio_multi_io_quirk(struct mmc_card *card,
 	return blk_size;
 }
 
-static const struct mmc_host_ops tmio_mmc_ops = {
+static int tmio_mmc_card_busy(struct mmc_host *mmc)
+{
+	struct tmio_mmc_host *host = mmc_priv(mmc);
+
+	return !(sd_ctrl_read32(host, CTL_STATUS2) & TMIO_STATUS2_DAT0);
+}
+
+static struct mmc_host_ops tmio_mmc_ops = {
 	.request	= tmio_mmc_request,
 	.set_ios	= tmio_mmc_set_ios,
 	.get_ro         = tmio_mmc_get_ro,
 	.get_cd		= mmc_gpio_get_cd,
 	.enable_sdio_irq = tmio_mmc_enable_sdio_irq,
+	.card_busy	= tmio_mmc_card_busy,
 	.multi_io_quirk	= tmio_multi_io_quirk,
 };
 
@@ -1115,7 +1126,9 @@ int tmio_mmc_host_probe(struct tmio_mmc_host *_host,
 		goto host_free;
 	}
 
+	tmio_mmc_ops.start_signal_voltage_switch = _host->start_signal_voltage_switch;
 	mmc->ops = &tmio_mmc_ops;
+
 	mmc->caps |= MMC_CAP_4_BIT_DATA | pdata->capabilities;
 	mmc->caps2 |= pdata->capabilities2;
 	mmc->max_segs = 32;

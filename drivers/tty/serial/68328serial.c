@@ -305,7 +305,7 @@ static void receive_chars(struct m68k_serial *info, unsigned short rx)
 	} while((rx = uart->urx.w) & URX_DATA_READY);
 #endif
 
-	tty_schedule_flip(&info->tport);
+	tty_flip_buffer_push(&info->tport);
 }
 
 static void transmit_chars(struct m68k_serial *info, struct tty_struct *tty)

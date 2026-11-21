@@ -16,7 +16,6 @@ config BITREVERSE
 config HAVE_ARCH_BITREVERSE
 	bool
 	default n
-	depends on BITREVERSE
 	help
 	  This option enables the use of hardware bit-reversal instructions on
 	  architectures which support such operations.
@@ -248,6 +247,9 @@ config ZSTD_COMPRESS
 
 config ZSTD_DECOMPRESS
 	select XXHASH
+	tristate
+
+config ZSTD_COMMON
 	tristate
 
 source "lib/xz/Kconfig"
